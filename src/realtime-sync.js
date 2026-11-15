@@ -6,7 +6,8 @@
 // calls so staff replies typed in a ticket channel make it back to the
 // website.
 const { EmbedBuilder, ChannelType, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
-const { supabase, ensurePlayerForDiscordUser } = require("./supabase");
+const { supabase, ensurePlayerForDiscordUser, invalidateVerifiedCache } = require("./supabase");
+const { checkCrackedNameAllowed } = require("./premium-check");
 const { GAMEMODE_PING_ROLE_NAMES, PERMISSION_ROLE_IDS, SUPPORT_CATEGORY_NAME, REGION_ROLE_NAMES, tierRoleName, queueCategoryName } = require("./config");
 
 const VERIFIED_ROLE_ID = "1556203882529558539";
@@ -87,6 +88,59 @@ async function grantRegionRole(guild, discordId, region) {
   } catch (err) {
     console.error("[realtime-sync] grantRegionRole failed:", err.message);
   }
+}
+
+// ---------- premium name check ----------
+
+// A cracked player verifying (or editing their profile) on the website with
+// a name that belongs to a premium Minecraft account gets undone here: the
+// website writes straight to Supabase, so the bot is the one place that can
+// check Mojang and enforce it. Their IGN is swapped for a placeholder (so
+// the real owner can still claim the name), their region and platform are
+// cleared (which puts them back to unverified and keeps them out of queues),
+// and they get a DM saying why. Resolves true when the row is fine.
+async function enforcePremiumName(guild, row) {
+  if (!row || row.platform !== "cracked" || !row.region || !row.username) return true;
+  let verdict;
+  try {
+    verdict = await checkCrackedNameAllowed(row.username, row.platform);
+  } catch (err) {
+    console.error("[premium-check] check failed:", err.message);
+    return true;
+  }
+  if (verdict.allowed) return true;
+
+  console.log(
+    `[premium-check] blocked cracked verify of premium name "${row.username}" ` +
+    `(player ${row.id}, premium ${verdict.premiumUUID}, offline ${verdict.offlineUUID})`
+  );
+  const { error } = await supabase
+    .from("players")
+    .update({ username: `Unverified_${row.id}`, platform: null, region: null })
+    .eq("id", row.id);
+  if (error) {
+    console.error("[premium-check] couldn't reset player", row.id, error.message);
+    return false;
+  }
+  if (row.discord_id) {
+    invalidateVerifiedCache(row.discord_id);
+    try {
+      const member = await guild.members.fetch(row.discord_id).catch(() => null);
+      if (member) {
+        const allRegionNames = new Set(Object.values(REGION_ROLE_NAMES));
+        for (const r of member.roles.cache.filter((r) => allRegionNames.has(r.name)).values()) {
+          await member.roles.remove(r).catch(() => {});
+        }
+        await member.send(
+          `❌ Your RyftTiers verification was rejected. ${verdict.reason}\n` +
+          "Verify again at https://ryfttiers.pages.dev/Verify"
+        ).catch(() => {});
+      }
+    } catch (err) {
+      console.error("[premium-check] couldn't notify", row.discord_id, err.message);
+    }
+  }
+  return false;
 }
 
 // ---------- tier roles ----------
@@ -562,7 +616,9 @@ async function initRealtimeSync(guild, { onQueueStateChange, onActiveTestSet } =
       const { discord_id, region } = payload.new || {};
       if (discord_id) {
         grantVerifiedRole(guild, discord_id);
-        grantRegionRole(guild, discord_id, region);
+        enforcePremiumName(guild, payload.new).then((ok) => {
+          if (ok) grantRegionRole(guild, discord_id, region);
+        });
       }
     })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "players" }, (payload) => {
@@ -571,10 +627,13 @@ async function initRealtimeSync(guild, { onQueueStateChange, onActiveTestSet } =
       if (discord_id && !payload.old?.discord_id) {
         grantVerifiedRole(guild, discord_id);
       }
-      // Grant region role when region is newly set or changed
-      if (discord_id && region && region !== payload.old?.region) {
-        grantRegionRole(guild, discord_id, region);
-      }
+      // Check the name isn't a premium account being claimed by a cracked
+      // player, then grant the region role when region is newly set or changed.
+      enforcePremiumName(guild, payload.new).then((ok) => {
+        if (ok && discord_id && region && region !== payload.old?.region) {
+          grantRegionRole(guild, discord_id, region);
+        }
+      });
     })
     .subscribe();
 
