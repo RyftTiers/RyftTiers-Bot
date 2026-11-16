@@ -2002,7 +2002,7 @@ client.on("interactionCreate", async (interaction) => {
   // /util rebuildqueues — wipes every old queue channel, queue forum and
   // (now-empty) queue category, then rebuilds from scratch: a "Queues"
   // category holding one forum per region (#as-queue, #eu-queue, #na-queue,
-  // #au-queue), each with one locked post per gamemode ("Pot
+  // #au-queue, #me-queue), each with one locked post per gamemode ("Pot
   // Queue", "UHC Queue", ...) carrying that queue's card. Touches ONLY queue
   // channels and their categories — nothing else in the server is affected.
   if (interaction.isChatInputCommand() && interaction.commandName === "util" && interaction.options.getString("action") === "rebuildqueues") {
@@ -2067,7 +2067,7 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       // 4. Create a "Queues" category with one forum per region
-      //    (#as-queue, #eu-queue, #na-queue, #au-queue) and one locked post per gamemode.
+      //    (#as-queue, #eu-queue, #na-queue, #au-queue, #me-queue) and one locked post per gamemode.
       await interaction.guild.channels.fetch();
       const category =
         interaction.guild.channels.cache.find(
