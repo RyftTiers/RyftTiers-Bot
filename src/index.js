@@ -1404,37 +1404,92 @@ function isRealtimeSuppressed(queueKey) {
   return false;
 }
 
-// Deletes whatever message is currently tracked for this queue (if any) and
-// posts a brand-new one reflecting its current state, instead of editing in
-// place. Used for the open <-> closed transition so the card resurfaces at
-// the bottom of the channel and can carry a ping as part of the same
-// message (rather than a separate ping message). `content` is the optional
-// text (role ping, etc.) sent alongside the embed.
-async function postFreshQueueMessage(channel, queueKey, gamemode, { isHigh = false, content = "" } = {}) {
-  const info = getQueueMessage(queueKey);
-  if (info) {
-    try {
-      const oldChannel = await channel.guild.channels.fetch(info.channelId).catch(() => null);
-      const oldMessage = oldChannel ? await oldChannel.messages.fetch(info.messageId).catch(() => null) : null;
-      if (oldMessage) await oldMessage.delete().catch(() => {});
-    } catch (err) {
-      console.error("[postFreshQueueMessage] couldn't delete old message:", err.message);
-    }
-  }
-  // Queue forum posts auto-archive after a week of no activity; reopen it so
-  // the bot can post (it has Manage Threads, so this works on locked posts).
-  if (channel.isThread?.() && channel.archived) {
-    await channel.setArchived(false).catch((err) => console.error("[postFreshQueueMessage] unarchive failed:", err.message));
-  }
-  const attachment = await buildQueueAttachment(queueKey, gamemode, channel.guild, { isHigh });
-  const components = isHigh ? await buildHighQueueButtons(queueKey) : await buildQueueButtons(queueKey);
-  const newMessage = await channel.send({
-    content: content || undefined,
-    files: [attachment],
-    components,
+// Serializes card updates per queue key. Without this, two updates landing
+// at once (two players clicking Join together, or a button click racing a
+// website open/close) both saw the same old card, both deleted it, and both
+// posted a new one, leaving two cards in the post.
+const queueCardLocks = new Map();
+
+function withQueueCardLock(queueKey, fn) {
+  const prev = queueCardLocks.get(queueKey) || Promise.resolve();
+  const run = prev.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  queueCardLocks.set(queueKey, tail);
+  tail.then(() => {
+    if (queueCardLocks.get(queueKey) === tail) queueCardLocks.delete(queueKey);
   });
-  await setQueueMessage(queueKey, channel.id, newMessage.id);
-  return newMessage;
+  return run;
+}
+
+// True if `message` is one of the bot's own queue cards of the given kind
+// (normal or high). Cards are the bot's messages carrying queue.png; a high
+// card is one with the highqueue_* buttons.
+function isQueueCardMessage(message, { isHigh = false } = {}) {
+  if (message.author?.id !== client.user?.id) return false;
+  if (!message.attachments?.some((a) => a.name === "queue.png")) return false;
+  const hasHighButtons = message.components?.some((row) =>
+    row.components?.some((c) => c.customId?.startsWith("highqueue_"))
+  );
+  return isHigh ? Boolean(hasHighButtons) : !hasHighButtons;
+}
+
+// Deletes every queue card of this kind in `channel` except `keepId` —
+// cleans up duplicates left by older bot versions or a second bot instance.
+async function deleteOtherQueueCards(channel, keepId, { isHigh = false } = {}) {
+  const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  if (!recent) return;
+  for (const message of recent.values()) {
+    if (message.id === keepId || message.id === channel.id) continue;
+    if (!isQueueCardMessage(message, { isHigh })) continue;
+    await message.delete().catch(() => {});
+  }
+}
+
+// Updates the queue card so the channel shows exactly ONE card for this
+// queue. With no `content`, the existing card is edited in place. With
+// `content` (a role ping when a queue opens), the old card is replaced by a
+// fresh one so the ping actually notifies and the card resurfaces.
+async function postFreshQueueMessage(channel, queueKey, gamemode, { isHigh = false, content = "" } = {}) {
+  return withQueueCardLock(queueKey, async () => {
+    // Queue forum posts auto-archive after a week of no activity; reopen it so
+    // the bot can post (it has Manage Threads, so this works on locked posts).
+    if (channel.isThread?.() && channel.archived) {
+      await channel.setArchived(false).catch((err) => console.error("[postFreshQueueMessage] unarchive failed:", err.message));
+    }
+
+    const info = getQueueMessage(queueKey);
+    let oldMessage = null;
+    if (info) {
+      const oldChannel =
+        info.channelId === channel.id ? channel : await channel.guild.channels.fetch(info.channelId).catch(() => null);
+      oldMessage = oldChannel ? await oldChannel.messages.fetch(info.messageId).catch(() => null) : null;
+    }
+
+    const attachment = await buildQueueAttachment(queueKey, gamemode, channel.guild, { isHigh });
+    const components = isHigh ? await buildHighQueueButtons(queueKey) : await buildQueueButtons(queueKey);
+
+    let cardMessage = null;
+    if (oldMessage && !content && oldMessage.channelId === channel.id) {
+      cardMessage = await oldMessage
+        .edit({ content: null, files: [attachment], attachments: [], components })
+        .catch((err) => {
+          console.error("[postFreshQueueMessage] edit failed, reposting:", err.message);
+          return null;
+        });
+    }
+    if (!cardMessage) {
+      if (oldMessage) await oldMessage.delete().catch(() => {});
+      cardMessage = await channel.send({
+        content: content || undefined,
+        files: [attachment],
+        components,
+      });
+      await setQueueMessage(queueKey, channel.id, cardMessage.id);
+    }
+
+    await deleteOtherQueueCards(channel, cardMessage.id, { isHigh });
+    return cardMessage;
+  });
 }
 
 // Called when a ticket closes (result submitted or cancelled). Clears the
