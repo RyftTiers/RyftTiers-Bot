@@ -20,6 +20,9 @@ const {
   AttachmentBuilder,
   ActivityType,
   Status,
+  ThreadAutoArchiveDuration,
+  SortOrderType,
+  ForumLayoutType,
 } = require("discord.js");
 const { createCanvas, loadImage, GlobalFonts } = require("@napi-rs/canvas");
 const path = require("path");
@@ -59,6 +62,13 @@ const {
   parseChannelName,
   gamemodeForChannelName,
   regionForChannelName,
+  QUEUE_FORUM_CATEGORY_NAME,
+  QUEUE_THREAD_NAMES,
+  QUEUE_THREAD_ORDER,
+  queueForumName,
+  regionForForumName,
+  gamemodeForThreadName,
+  parseQueueChannel,
   RESTRICTED_ROLE_ID,
   GAMEMODE_EMOJIS,
   COIN_REWARDS,
@@ -247,12 +257,59 @@ function testerAndUpRoleIds(guild) {
 // testers/managers/mods/owners (and the bot) — players can still see the
 // queue and use the buttons, they just can't type in it.
 async function lockChannelToTesters(guild, channel) {
+  // On a forum, SendMessages = "create posts" and SendMessagesInThreads =
+  // "reply in posts", so both are locked to keep queue posts read-only.
   await channel.permissionOverwrites
-    .edit(guild.roles.everyone.id, { SendMessages: false })
+    .edit(guild.roles.everyone.id, { SendMessages: false, SendMessagesInThreads: false, CreatePublicThreads: false })
     .catch(() => {});
   for (const roleId of testerAndUpRoleIds(guild)) {
-    await channel.permissionOverwrites.edit(roleId, { SendMessages: true }).catch(() => {});
+    await channel.permissionOverwrites
+      .edit(roleId, { SendMessages: true, SendMessagesInThreads: true })
+      .catch(() => {});
   }
+}
+
+// ---------- forum-based queues ----------
+
+// The region's queue forum (e.g. #as-queue), or undefined if it's missing.
+function findQueueForum(guild, region) {
+  return guild.channels.cache.find(
+    (c) => c.type === ChannelType.GuildForum && regionForForumName(c.name) === region
+  );
+}
+
+// Finds a gamemode's post inside a queue forum — checks the cache, then
+// active threads, then archived ones (and unarchives it so the bot can post).
+async function findQueueThreadInForum(forum, gamemode) {
+  const match = (t) => gamemodeForThreadName(t.name) === gamemode;
+  let thread = forum.threads.cache.find(match);
+  if (!thread) {
+    const active = await forum.threads.fetchActive().catch(() => null);
+    thread = active?.threads.find((t) => t.parentId === forum.id && match(t));
+  }
+  if (!thread) {
+    const archived = await forum.threads.fetchArchived({ type: "public", limit: 100 }).catch(() => null);
+    thread = archived?.threads.find(match);
+  }
+  if (thread?.archived) await thread.setArchived(false).catch(() => {});
+  return thread || null;
+}
+
+// The channel a (gamemode, region) queue lives in: its post inside the
+// region's forum, or — if that forum doesn't exist yet — an old-style
+// "💎-crystal-tiertest-na" text channel. Returns null if neither exists.
+async function findQueueChannel(guild, gamemode, region) {
+  const forum = findQueueForum(guild, region);
+  if (forum) {
+    const thread = await findQueueThreadInForum(forum, gamemode);
+    if (thread) return thread;
+  }
+  return guild.channels.cache.find(
+    (c) =>
+      c.type === ChannelType.GuildText &&
+      gamemodeForChannelName(c.name) === gamemode &&
+      regionForChannelName(c.name) === region
+  ) || null;
 }
 
 // @everyone only actually pings when it's in a message's plain content, not
@@ -1363,6 +1420,11 @@ async function postFreshQueueMessage(channel, queueKey, gamemode, { isHigh = fal
       console.error("[postFreshQueueMessage] couldn't delete old message:", err.message);
     }
   }
+  // Queue forum posts auto-archive after a week of no activity; reopen it so
+  // the bot can post (it has Manage Threads, so this works on locked posts).
+  if (channel.isThread?.() && channel.archived) {
+    await channel.setArchived(false).catch((err) => console.error("[postFreshQueueMessage] unarchive failed:", err.message));
+  }
   const attachment = await buildQueueAttachment(queueKey, gamemode, channel.guild, { isHigh });
   const components = isHigh ? await buildHighQueueButtons(queueKey) : await buildQueueButtons(queueKey);
   const newMessage = await channel.send({
@@ -1473,7 +1535,9 @@ async function createTicketChannel(guild, sourceChannel, gamemode, testerMember,
   }
 
   // High queue tickets go in their own "High Tests" category — find it or create it.
-  let parentId = sourceChannel.parentId || null;
+  // A forum post's parent is the forum itself, which can't hold text
+  // channels — use the forum's category instead.
+  let parentId = (sourceChannel.isThread?.() ? sourceChannel.parent?.parentId : sourceChannel.parentId) || null;
   if (isHigh) {
     const HIGH_TESTS_CATEGORY = "High Tests";
     let highCat = guild.channels.cache.find(
@@ -1839,7 +1903,7 @@ client.on("interactionCreate", async (interaction) => {
     if (!roles.isManager && !roles.isOwner) {
       return interaction.reply({ content: "Only managers and owners can use closequeue.", ephemeral: true });
     }
-    const parsed = parseChannelName(interaction.channel.name);
+    const parsed = parseQueueChannel(interaction.channel);
     if (!parsed) {
       return interaction.reply({ content: "Run this inside a tiertest channel.", ephemeral: true });
     }
@@ -1934,16 +1998,18 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.editReply({ content: "High tier rubric posted!" });
   }
 
-  // /rebuildqueues — wipes every queue channel and queue category, then
-  // rebuilds from scratch: 5 region categories (NA/EU/AS/ME/AU), each
-  // containing one channel per gamemode. Touches ONLY queue channels and
-  // their categories — nothing else in the server is affected.
+  // /util rebuildqueues — wipes every old queue channel, queue forum and
+  // (now-empty) queue category, then rebuilds from scratch: a "Queues"
+  // category holding one forum per region (#na-queue, #eu-queue, #as-queue,
+  // #me-queue, #au-queue), each with one locked post per gamemode ("Pot
+  // Queue", "UHC Queue", ...) carrying that queue's card. Touches ONLY queue
+  // channels and their categories — nothing else in the server is affected.
   if (interaction.isChatInputCommand() && interaction.commandName === "util" && interaction.options.getString("action") === "rebuildqueues") {
     if (!canManageCooldowns(interaction.member)) {
       return interaction.reply({ content: "Only testers, managers, or admins can do that.", ephemeral: true });
     }
-    if (!interaction.guild.members.me.permissions.has(PermissionsBitField.Flags.ManageChannels)) {
-      return interaction.reply({ content: "I need the **Manage Channels** permission to do this.", ephemeral: true });
+    if (!interaction.guild.members.me.permissions.has([PermissionsBitField.Flags.ManageChannels, PermissionsBitField.Flags.ManageThreads])) {
+      return interaction.reply({ content: "I need the **Manage Channels** and **Manage Threads** permissions to do this.", ephemeral: true });
     }
 
     await interaction.deferReply({ ephemeral: true });
@@ -1964,9 +2030,11 @@ client.on("interactionCreate", async (interaction) => {
         }
       }
 
-      // 2. Delete every existing queue channel (region-format names) and
-      //    every legacy pre-region queue channel.
+      // 2. Delete every old queue channel: region-format text channels
+      //    ("💎-crystal-tiertest-na"), legacy pre-region ones, and any
+      //    existing region queue forums (deleting a forum deletes its posts).
       const toDeleteChannels = interaction.guild.channels.cache.filter((c) => {
+        if (c.type === ChannelType.GuildForum) return Boolean(regionForForumName(c.name));
         if (c.type !== ChannelType.GuildText) return false;
         if (parseChannelName(c.name)) return true;
         // legacy: ends with a base name and has no region suffix
@@ -1979,36 +2047,48 @@ client.on("interactionCreate", async (interaction) => {
         await ch.delete().catch((err) => console.error(`[rebuildqueues] delete channel ${ch.name}:`, err.message));
       }
 
-      // 3. Delete queue categories: old gamemode-named ones AND region-named ones.
+      // 3. Delete old queue categories: gamemode-named ("UHC Test"),
+      //    region-named ("NA"), and the forum category ("Queues") — but only
+      //    if they're empty now, so nothing unrelated gets orphaned.
       const queueCatNames = new Set([
         ...GAMEMODES.map((gm) => queueCategoryName(gm).toLowerCase()),
         ...REGIONS.map((r) => r.toLowerCase()),
+        QUEUE_FORUM_CATEGORY_NAME.toLowerCase(),
       ]);
       // Re-fetch so the cache reflects deleted channels.
       await interaction.guild.channels.fetch();
       for (const [, ch] of interaction.guild.channels.cache) {
         if (ch.type !== ChannelType.GuildCategory) continue;
         if (!queueCatNames.has(ch.name.toLowerCase())) continue;
+        const hasChildren = interaction.guild.channels.cache.some((c) => c.parentId === ch.id);
+        if (hasChildren) continue;
         await ch.delete().catch((err) => console.error(`[rebuildqueues] delete category ${ch.name}:`, err.message));
       }
 
-      // 4. Create fresh region categories and all queue channels under them.
+      // 4. Create a "Queues" category with one forum per region
+      //    (#na-queue, #eu-queue, ...) and one locked post per gamemode.
       await interaction.guild.channels.fetch();
+      const category =
+        interaction.guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === QUEUE_FORUM_CATEGORY_NAME.toLowerCase()
+        ) ||
+        (await interaction.guild.channels.create({ name: QUEUE_FORUM_CATEGORY_NAME, type: ChannelType.GuildCategory }));
+
       const created = [];
       for (const region of REGIONS) {
-        const category = await interaction.guild.channels.create({
-          name: region,
-          type: ChannelType.GuildCategory,
+        const forum = await interaction.guild.channels.create({
+          name: queueForumName(region),
+          type: ChannelType.GuildForum,
+          parent: category.id,
+          topic: `${region} tier-test queues — open your gamemode's post and use the queue card's buttons to join.`,
+          defaultSortOrder: SortOrderType.CreationDate,
+          defaultForumLayout: ForumLayoutType.ListView,
         });
+        await lockChannelToTesters(interaction.guild, forum);
 
-        for (const gamemode of GAMEMODES) {
-          const channel = await interaction.guild.channels.create({
-            name: regionChannelName(gamemode, region),
-            type: ChannelType.GuildText,
-            parent: category.id,
-          });
-          await lockChannelToTesters(interaction.guild, channel);
-
+        // Forum lists newest posts first, so create them in reverse to end
+        // up with Pot at the top and Crystal at the bottom.
+        for (const gamemode of [...QUEUE_THREAD_ORDER].reverse()) {
           const queueKey = `${gamemode}:${region}`;
           const highKey = `${queueKey}:high`;
           await deleteQueueMessage(queueKey);
@@ -2020,17 +2100,22 @@ client.on("interactionCreate", async (interaction) => {
           await setQueueClosed(highKey, true);
           await setQueueLocked(highKey, false);
 
-          // Clear any stale messages that survived a failed channel delete.
-          await channel.bulkDelete(100).catch(() => {});
-
-          const display = `${GAMEMODE_PING_ROLE_NAMES[gamemode] || gamemode} (${region})`;
-          await channel.send({ content: buildWaitingListMessage(display, commandsChannel) }).catch(() => {});
-          await postFreshQueueMessage(channel, queueKey, gamemode);
-          created.push(channel.name);
+          const emoji = GAMEMODE_EMOJIS[gamemode] ? `${GAMEMODE_EMOJIS[gamemode]} ` : "";
+          const display = `${emoji}${GAMEMODE_PING_ROLE_NAMES[gamemode] || gamemode} (${region})`;
+          const thread = await forum.threads.create({
+            name: QUEUE_THREAD_NAMES[gamemode],
+            autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+            message: { content: buildWaitingListMessage(display, commandsChannel) },
+          });
+          await postFreshQueueMessage(thread, queueKey, gamemode);
+          // Locked = only staff with Manage Threads (and the bot) can post;
+          // the queue card's buttons still work for everyone.
+          await thread.setLocked(true).catch((err) => console.error(`[rebuildqueues] lock ${thread.name}:`, err.message));
+          created.push(`${forum.name}/${thread.name}`);
         }
       }
 
-      return replyChunked(interaction, `Queue channels rebuilt.\n**Created (${created.length}):** ${created.join(", ")}`);
+      return replyChunked(interaction, `Queue forums rebuilt.\n**Created (${created.length}):** ${created.join(", ")}`);
     } catch (err) {
       console.error("[rebuildqueues] failed:", err.message);
       return replyChunked(interaction, `Error: ${err.message}`);
@@ -2078,7 +2163,7 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ content: "Only testers can use this command.", ephemeral: true });
     }
     const isTestChannel = testWaitlistChannelId && interaction.channel.id === testWaitlistChannelId;
-    const parsed = isTestChannel ? null : parseChannelName(interaction.channel.name);
+    const parsed = isTestChannel ? null : parseQueueChannel(interaction.channel);
     if (!isTestChannel && !parsed) {
       return interaction.reply({ content: "Run this inside a tier-test queue channel.", ephemeral: true });
     }
@@ -2253,7 +2338,7 @@ client.on("interactionCreate", async (interaction) => {
     if (!roles.isManager && !roles.isModerator && !roles.isOwner) {
       return interaction.reply({ content: "Only managers can use this command.", ephemeral: true });
     }
-    const parsed = parseChannelName(interaction.channel.name);
+    const parsed = parseQueueChannel(interaction.channel);
     if (!parsed) {
       return interaction.reply({ content: "Run this in a tiertest queue channel.", ephemeral: true });
     }
@@ -3495,7 +3580,7 @@ client.on("interactionCreate", async (interaction) => {
     // Everything below only applies inside actual gamemode queue channels —
     // each one now pins exactly one (gamemode, region) pair, parsed
     // straight from the channel's own name.
-    const parsed = parseChannelName(interaction.channel.name);
+    const parsed = parseQueueChannel(interaction.channel);
     if (!parsed) return;
     const { gamemode, region } = parsed;
     const queueKey = `${gamemode}:${region}`;
@@ -3520,12 +3605,10 @@ client.on("interactionCreate", async (interaction) => {
       }
       const { isManager, isOwner } = computeRoleFlags(interaction.member);
       if (!isManager && !isOwner && joiner.region !== region) {
-        const correctChannel = interaction.guild.channels.cache.find(
-          (c) => gamemodeForChannelName(c.name) === gamemode && regionForChannelName(c.name) === joiner.region
-        );
+        const correctChannel = await findQueueChannel(interaction.guild, gamemode, joiner.region);
         return interaction.editReply({
           content: `This is the **${region}** queue — you're set to **${joiner.region}**. ${
-            correctChannel ? `Head to ${correctChannel} instead.` : "Ask staff to run /setupqueues if your region's channel is missing."
+            correctChannel ? `Head to ${correctChannel} instead.` : "Ask staff to run /util rebuildqueues if your region's queue is missing."
           }`,
         });
       }
@@ -3594,12 +3677,10 @@ client.on("interactionCreate", async (interaction) => {
       }
       const { isManager, isOwner } = computeRoleFlags(interaction.member);
       if (!isManager && !isOwner && player.region !== region) {
-        const correctChannel = interaction.guild.channels.cache.find(
-          (c) => gamemodeForChannelName(c.name) === gamemode && regionForChannelName(c.name) === player.region
-        );
+        const correctChannel = await findQueueChannel(interaction.guild, gamemode, player.region);
         return interaction.editReply({
           content: `This is the **${region}** high queue — you're set to **${player.region}**. ${
-            correctChannel ? `Head to ${correctChannel} instead.` : "Ask staff to run /setupqueues if your region's channel is missing."
+            correctChannel ? `Head to ${correctChannel} instead.` : "Ask staff to run /util rebuildqueues if your region's queue is missing."
           }`,
         });
       }
@@ -3656,9 +3737,7 @@ client.on("interactionCreate", async (interaction) => {
         ephemeral: true,
       });
     }
-    const channel = interaction.guild.channels.cache.find(
-      (c) => gamemodeForChannelName(c.name) === gamemode && regionForChannelName(c.name) === requester.region
-    );
+    const channel = await findQueueChannel(interaction.guild, gamemode, requester.region);
     if (!channel) {
       return interaction.reply({
         content: `Couldn't find the **${requester.region}** queue channel for that gamemode — ask staff to run /setupqueues.`,
@@ -4168,12 +4247,7 @@ client.once("ready", async () => {
         if (isHigh) return;
 
         // Find the tiertest channel matching both the gamemode AND region.
-        const channel = g.channels.cache.find(
-          (c) =>
-            c.type === ChannelType.GuildText &&
-            gamemodeForChannelName(c.name) === gamemode &&
-            regionForChannelName(c.name) === region
-        );
+        const channel = await findQueueChannel(g, gamemode, region);
         if (!channel) return;
 
         const isNowOpen = !row.closed;
@@ -4311,7 +4385,9 @@ client.once("ready", async () => {
   try {
     const guild = await client.guilds.fetch(guildId);
     const tiertestChannels = guild.channels.cache.filter(
-      (c) => c.type === ChannelType.GuildText && gamemodeForChannelName(c.name)
+      (c) =>
+        (c.type === ChannelType.GuildText && gamemodeForChannelName(c.name)) ||
+        (c.type === ChannelType.GuildForum && regionForForumName(c.name))
     );
     for (const channel of tiertestChannels.values()) {
       await lockChannelToTesters(guild, channel);
