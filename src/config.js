@@ -87,6 +87,10 @@ function regionForChannelName(name) {
 // /util rebuildqueues creates whatever's missing.
 const QUEUE_FORUM_CATEGORY_NAME = "Queues";
 
+// Regions that get a queue forum, in channel order. A subset of REGIONS:
+// other regions (e.g. ME) stay valid for verification but have no queue.
+const QUEUE_FORUM_REGIONS = ["AS", "EU", "NA", "AU"];
+
 // Forum post name per gamemode, in the order they should be listed
 // (top to bottom) inside each region's forum.
 const QUEUE_THREAD_NAMES = {
@@ -333,6 +337,7 @@ module.exports = {
   gamemodeForChannelName,
   regionForChannelName,
   QUEUE_FORUM_CATEGORY_NAME,
+  QUEUE_FORUM_REGIONS,
   QUEUE_THREAD_NAMES,
   QUEUE_THREAD_ORDER,
   queueForumName,
