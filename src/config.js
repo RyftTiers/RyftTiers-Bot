@@ -80,6 +80,73 @@ function regionForChannelName(name) {
   return parseChannelName(name)?.region;
 }
 
+// ---------- forum-based queues ----------
+// Each region has ONE forum channel (e.g. "as-queue", "eu-queue"), and each
+// gamemode's queue is a post (thread) inside it, e.g. "Pot Queue" in
+// #as-queue. The queue card + Join/Leave buttons live in that post.
+// /util rebuildqueues creates whatever's missing.
+const QUEUE_FORUM_CATEGORY_NAME = "Queues";
+
+// Regions that get a queue forum, in channel order.
+const QUEUE_FORUM_REGIONS = ["AS", "EU", "NA", "AU", "ME"];
+
+// Forum post name per gamemode, in the order they should be listed
+// (top to bottom) inside each region's forum.
+const QUEUE_THREAD_NAMES = {
+  pot: "Pot Queue",
+  uhc: "UHC Queue",
+  smp: "SMP Queue",
+  nethop: "NethPot Queue",
+  cart: "Cart Queue",
+  mace: "Mace Queue",
+  spearmace: "Mace and Spear Queue",
+  sword: "Sword Queue",
+  axe: "Axe Queue",
+  vanilla: "Crystal Queue",
+};
+const QUEUE_THREAD_ORDER = Object.keys(QUEUE_THREAD_NAMES);
+
+// "AS" -> "as-queue"
+function queueForumName(region) {
+  return `${region.toLowerCase()}-queue`;
+}
+
+// Matches a forum channel name back to its region. Tolerates an emoji or
+// other prefix, e.g. "🌏-as-queue" or "as-queue" -> "AS".
+function regionForForumName(name) {
+  const m = /(?:^|[^a-z])([a-z]{2})-queue$/i.exec(name || "");
+  if (!m) return undefined;
+  const region = m[1].toUpperCase();
+  return REGIONS.includes(region) ? region : undefined;
+}
+
+function normalizeThreadName(name) {
+  return (name || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/ queue$/, "");
+}
+
+// Matches a forum post name back to its gamemode, ignoring case, emoji and
+// a trailing "Queue" (so "Mace and Spear" and "mace and spear queue" both
+// map to spearmace).
+function gamemodeForThreadName(name) {
+  const target = normalizeThreadName(name);
+  if (!target) return undefined;
+  return QUEUE_THREAD_ORDER.find((gm) => normalizeThreadName(QUEUE_THREAD_NAMES[gm]) === target);
+}
+
+// Works out { gamemode, region } for the channel an interaction happened
+// in. A queue forum post resolves via its parent forum (region) and its own
+// name (gamemode); an old-style "💎-crystal-tiertest-na" text channel still
+// resolves by name so nothing breaks mid-migration.
+function parseQueueChannel(channel) {
+  if (!channel) return undefined;
+  if (typeof channel.isThread === "function" && channel.isThread()) {
+    const region = regionForForumName(channel.parent?.name);
+    const gamemode = gamemodeForThreadName(channel.name);
+    return region && gamemode ? { gamemode, region } : undefined;
+  }
+  return parseChannelName(channel.name);
+}
+
 // Discord role to ping when a queue opens for each gamemode, matched by
 // NAME rather than a hardcoded ID. This means the role just has to exist
 // (under this exact name) on whichever server the bot is running on —
@@ -268,6 +335,14 @@ module.exports = {
   parseChannelName,
   gamemodeForChannelName,
   regionForChannelName,
+  QUEUE_FORUM_CATEGORY_NAME,
+  QUEUE_FORUM_REGIONS,
+  QUEUE_THREAD_NAMES,
+  QUEUE_THREAD_ORDER,
+  queueForumName,
+  regionForForumName,
+  gamemodeForThreadName,
+  parseQueueChannel,
   COIN_REWARDS,
   MILESTONE_TIERS,
   SHOP_ITEMS,

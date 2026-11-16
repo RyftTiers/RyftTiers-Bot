@@ -32,11 +32,14 @@ in sync both ways over Supabase Realtime (see `src/realtime-sync.js`).
    ```
    npm start
    ```
-7. Run `/setupqueues` once in any channel. This creates every missing
-   gamemode/tier role and tiertest channel (see `src/config.js` for the full
-   list) and posts the queue message — both the normal and high (LT3+) queue —
-   for each one, starting closed. Testers open them from there with the
-   **Open Queue** button (which asks for a region via a popup).
+7. Run `/util rebuildqueues` once in any channel. This deletes any old queue
+   channels and builds a **Queues** category with one forum per region
+   (`#as-queue`, `#eu-queue`, `#na-queue`, `#au-queue`, `#me-queue`). Each
+   forum has one locked post per gamemode (Pot Queue, UHC Queue, SMP Queue,
+   NethPot Queue, Cart Queue, Mace Queue, Mace and Spear Queue, Sword Queue,
+   Axe Queue, Crystal Queue) holding that queue's card, starting closed.
+   Testers open a queue from its post. The bot needs **Manage Channels** and
+   **Manage Threads**.
 
 ## How it works
 
@@ -59,8 +62,8 @@ in sync both ways over Supabase Realtime (see `src/realtime-sync.js`).
 ## Adding or renaming gamemode channels
 
 Edit `src/config.js` — the `GAMEMODE_CHANNELS` object maps a Discord channel
-name to a gamemode id. Add a new line for any new channel, then re-run
-`/setupqueues` — it only touches what's missing.
+name to a gamemode id. Add a new line for any new channel, add its forum post name to
+`QUEUE_THREAD_NAMES`, then re-run `/util rebuildqueues`.
 
 ## Never commit
 
