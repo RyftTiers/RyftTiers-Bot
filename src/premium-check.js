@@ -111,4 +111,25 @@ async function checkCrackedNameAllowed(username, platform) {
   };
 }
 
-module.exports = { lookupPremiumAccount, checkCrackedNameAllowed, offlineUUID };
+const MOJANG_SESSION_URL = "https://sessionserver.mojang.com/session/minecraft/profile/";
+
+/**
+ * Looks up a premium account's current name from its UUID, which is how a
+ * renamed account is followed. Returns { status: "found", name },
+ * { status: "not_found" } when Mojang has no such account, or
+ * { status: "unknown", error } when Mojang couldn't be reached.
+ */
+async function lookupNameByUUID(uuid) {
+  const hex = String(uuid || "").replace(/-/g, "").toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(hex)) return { status: "not_found" };
+  try {
+    const { status, body } = await httpGetJson(MOJANG_SESSION_URL + hex);
+    if (status === 200 && body && body.name) return { status: "found", name: body.name };
+    if (status === 204 || status === 404) return { status: "not_found" };
+    return { status: "unknown", error: `HTTP ${status}` };
+  } catch (err) {
+    return { status: "unknown", error: err.message };
+  }
+}
+
+module.exports = { lookupPremiumAccount, lookupNameByUUID, checkCrackedNameAllowed, offlineUUID, dashUUID };

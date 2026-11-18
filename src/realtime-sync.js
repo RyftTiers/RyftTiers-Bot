@@ -8,6 +8,7 @@
 const { EmbedBuilder, ChannelType, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { supabase, ensurePlayerForDiscordUser, invalidateVerifiedCache } = require("./supabase");
 const { checkCrackedNameAllowed } = require("./premium-check");
+const { syncPlayerUUID, startUUIDSync } = require("./uuid-sync");
 const { GAMEMODE_PING_ROLE_NAMES, PERMISSION_ROLE_IDS, SUPPORT_CATEGORY_NAME, REGION_ROLE_NAMES, tierRoleName, queueCategoryName } = require("./config");
 
 const VERIFIED_ROLE_ID = "1556203882529558539";
@@ -619,6 +620,7 @@ async function initRealtimeSync(guild, { onQueueStateChange, onActiveTestSet } =
         enforcePremiumName(guild, payload.new).then((ok) => {
           if (ok) grantRegionRole(guild, discord_id, region);
         });
+        syncPlayerUUID(payload.new).catch((e) => console.error("[uuid-sync]", e.message));
       }
     })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "players" }, (payload) => {
@@ -634,8 +636,14 @@ async function initRealtimeSync(guild, { onQueueStateChange, onActiveTestSet } =
           grantRegionRole(guild, discord_id, region);
         }
       });
+      // Save the Minecraft UUID once a premium player has verified (the
+      // UUID is cleared by set_my_profile whenever the name changes).
+      syncPlayerUUID(payload.new).catch((e) => console.error("[uuid-sync]", e.message));
     })
     .subscribe();
+
+  // Give older verified premium players a UUID and follow renames.
+  startUUIDSync();
 
   supabase
     .channel("bot-support-tickets")

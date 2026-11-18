@@ -142,7 +142,8 @@ async function setVerifiedUsername(discordUserId, mcUsername, platform) {
   if (existing) {
     await supabase
       .from("players")
-      .update({ username: mcUsername, platform: platform || "premium" })
+      // uuid is cleared so uuid-sync re-resolves it for the new name.
+      .update({ username: mcUsername, platform: platform || "premium", uuid: null })
       .eq("id", existing.id);
     return;
   }
@@ -154,7 +155,7 @@ async function setVerifiedUsername(discordUserId, mcUsername, platform) {
   if (byName) {
     await supabase
       .from("players")
-      .update({ discord_id: discordUserId, platform: platform || "premium" })
+      .update({ discord_id: discordUserId, platform: platform || "premium", uuid: null })
       .eq("id", byName.id);
     return;
   }
