@@ -24,7 +24,8 @@ const { supabase } = require("./supabase");
 const { lookupPremiumAccount, lookupNameByUUID } = require("./premium-check");
 
 const RENAME_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
-const MOJANG_GAP_MS = 1200; // stay well under Mojang's rate limits
+const MOJANG_GAP_MS = 2500; // stay well under Mojang's rate limits
+const RETRY_UNRESOLVED_MS = 15 * 60 * 1000; // re-try lookups Mojang refused
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -43,16 +44,17 @@ function needsUUID(row) {
 // Resolves and saves the UUID for one players row. Safe to call on every
 // players INSERT/UPDATE: it does nothing unless the row needs one, and the
 // write it makes leaves a row that no longer does (so no loop).
+// Resolves to "saved", "skipped", or "retry" (Mojang couldn't answer).
 async function syncPlayerUUID(row) {
-  if (!needsUUID(row)) return;
+  if (!needsUUID(row)) return "skipped";
   const account = await lookupPremiumAccount(row.username);
   if (account.status === "unknown") {
     console.warn(`[uuid-sync] couldn't resolve "${row.username}" (${account.error}); will retry later`);
-    return;
+    return "retry";
   }
   if (account.status !== "premium") {
     console.log(`[uuid-sync] "${row.username}" (player ${row.id}) is not a premium account; no UUID saved`);
-    return;
+    return "skipped";
   }
 
   const { data: owner, error: ownerErr } = await supabase
@@ -62,14 +64,14 @@ async function syncPlayerUUID(row) {
     .maybeSingle();
   if (ownerErr) {
     console.error("[uuid-sync] lookup failed:", ownerErr.message);
-    return;
+    return "retry";
   }
   if (owner && owner.id !== row.id) {
     console.warn(
       `[uuid-sync] UUID ${account.uuid} for "${row.username}" (player ${row.id}) already belongs to ` +
       `"${owner.username}" (player ${owner.id}); not saving it twice. Staff should merge these rows.`
     );
-    return;
+    return "skipped";
   }
 
   // Save Mojang's capitalisation of the name too (same name, so the unique
@@ -83,13 +85,15 @@ async function syncPlayerUUID(row) {
     .is("uuid", null);
   if (error) {
     console.error(`[uuid-sync] couldn't save UUID for player ${row.id}:`, error.message);
-    return;
+    return "retry";
   }
   console.log(`[uuid-sync] player ${row.id} "${account.name}" -> ${account.uuid}`);
+  return "saved";
 }
 
 // Gives a UUID to every verified premium player who doesn't have one yet
 // (players who verified before UUIDs were saved, or whose lookup failed).
+// Resolves to how many lookups Mojang couldn't answer.
 async function backfillMissingUUIDs() {
   const { data, error } = await supabase
     .from("players")
@@ -99,13 +103,19 @@ async function backfillMissingUUIDs() {
     .is("uuid", null);
   if (error) {
     console.error("[uuid-sync] backfill query failed:", error.message);
-    return;
+    return 1;
   }
+  let unresolved = 0;
   for (const row of data || []) {
     if (!needsUUID(row)) continue;
-    await syncPlayerUUID(row).catch((e) => console.error("[uuid-sync] backfill:", e.message));
+    const outcome = await syncPlayerUUID(row).catch((e) => {
+      console.error("[uuid-sync] backfill:", e.message);
+      return "retry";
+    });
+    if (outcome === "retry") unresolved++;
     await sleep(MOJANG_GAP_MS);
   }
+  return unresolved;
 }
 
 // Follows renames: for each saved UUID, asks Mojang for the account's
@@ -145,16 +155,23 @@ let started = false;
 function startUUIDSync() {
   if (started) return;
   started = true;
-  const run = async () => {
-    try {
-      await backfillMissingUUIDs();
-      await refreshRenamedPlayers();
-    } catch (err) {
-      console.error("[uuid-sync] periodic run failed:", err.message);
+  // Backfill until every lookup got an answer (Mojang often rate-limits
+  // shared hosts), retrying every 15 minutes, then fall back to the 12-hour
+  // cycle along with the rename check.
+  const backfill = async () => {
+    const unresolved = await backfillMissingUUIDs().catch((e) => {
+      console.error("[uuid-sync] backfill failed:", e.message);
+      return 1;
+    });
+    if (unresolved > 0) {
+      console.log(`[uuid-sync] ${unresolved} lookup(s) unresolved; retrying in 15 minutes`);
+      setTimeout(backfill, RETRY_UNRESOLVED_MS);
     }
   };
-  run();
-  setInterval(run, RENAME_CHECK_INTERVAL_MS);
+  const renames = () =>
+    refreshRenamedPlayers().catch((e) => console.error("[uuid-sync] rename check failed:", e.message));
+  backfill().then(renames);
+  setInterval(() => backfill().then(renames), RENAME_CHECK_INTERVAL_MS);
 }
 
 module.exports = { syncPlayerUUID, backfillMissingUUIDs, refreshRenamedPlayers, startUUIDSync, needsUUID };
