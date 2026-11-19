@@ -17,6 +17,14 @@ create table if not exists players (
 );
 create unique index if not exists players_username_lower_key on players (username_lower);
 
+-- Minecraft account UUID of a verified premium player. Written only by the
+-- bot (service role) after resolving the name with Mojang at verification;
+-- after that the bot follows renames by UUID. Public tools such as Global
+-- Tier Tagger match players by it. Null for bedrock/cracked players and for
+-- rows nobody has verified yet.
+alter table players add column if not exists uuid uuid;
+create unique index if not exists players_uuid_key on players (uuid) where uuid is not null;
+
 create table if not exists player_tiers (
   player_id bigint not null references players(id) on delete cascade,
   gamemode text not null,
@@ -601,6 +609,12 @@ security definer
 as $$
 begin
   update players set
+    -- A new name or platform means the saved Minecraft UUID may no longer
+    -- be theirs: clear it so the bot (src/uuid-sync.js) resolves it again.
+    uuid = case
+      when (p_username is not null and lower(p_username) <> lower(username))
+        or (p_platform is not null and p_platform is distinct from platform)
+      then null else uuid end,
     username = coalesce(p_username, username),
     platform = coalesce(p_platform, platform),
     region = coalesce(p_region, region)
