@@ -52,6 +52,43 @@ function offlineUUID(username) {
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const _cache = new Map(); // lowercased name -> { result, expiresAt }
 
+// Two Mojang endpoints answer "which account has this name". Shared hosts
+// (like Render) get rate-limited (HTTP 429) on them often, so try both, and
+// on a 429 wait and try again a couple of times before giving up.
+const NAME_LOOKUP_URLS = [
+  "https://api.minecraftservices.com/minecraft/profile/lookup/name/",
+  MOJANG_PROFILE_URL,
+];
+const RETRY_DELAYS_MS = [3000, 10000];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Java account names are 3-16 of A-Z, a-z, 0-9 and _. Anything else can't
+// be a premium account, so it's answered without asking Mojang.
+const JAVA_NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
+
+async function askMojang(username) {
+  let lastError = "no response";
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    let rateLimited = false;
+    for (const base of NAME_LOOKUP_URLS) {
+      try {
+        const { status, body } = await httpGetJson(base + encodeURIComponent(username));
+        if (status === 200 && body && body.id) {
+          return { status: "premium", uuid: dashUUID(body.id), name: body.name || username };
+        }
+        if (status === 204 || status === 404) return { status: "not_premium" };
+        if (status === 429) rateLimited = true;
+        lastError = `HTTP ${status}`;
+      } catch (err) {
+        lastError = err.message;
+      }
+    }
+    if (!rateLimited || attempt === RETRY_DELAYS_MS.length) break;
+    await sleep(RETRY_DELAYS_MS[attempt]);
+  }
+  return { status: "unknown", error: lastError };
+}
+
 /**
  * Looks a name up with Mojang.
  * Returns { status: "premium", uuid, name } when it's a paid account,
@@ -61,23 +98,12 @@ const _cache = new Map(); // lowercased name -> { result, expiresAt }
  */
 async function lookupPremiumAccount(username) {
   const key = String(username || "").toLowerCase();
-  if (!key) return { status: "not_premium" };
+  if (!key || !JAVA_NAME_RE.test(username)) return { status: "not_premium" };
   const hit = _cache.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.result;
 
-  let result;
-  try {
-    const { status, body } = await httpGetJson(MOJANG_PROFILE_URL + encodeURIComponent(username));
-    if (status === 200 && body && body.id) {
-      result = { status: "premium", uuid: dashUUID(body.id), name: body.name || username };
-    } else if (status === 204 || status === 404) {
-      result = { status: "not_premium" };
-    } else {
-      return { status: "unknown", error: `HTTP ${status}` };
-    }
-  } catch (err) {
-    return { status: "unknown", error: err.message };
-  }
+  const result = await askMojang(username);
+  if (result.status === "unknown") return result;
   _cache.set(key, { result, expiresAt: Date.now() + CACHE_TTL_MS });
   return result;
 }
@@ -122,14 +148,21 @@ const MOJANG_SESSION_URL = "https://sessionserver.mojang.com/session/minecraft/p
 async function lookupNameByUUID(uuid) {
   const hex = String(uuid || "").replace(/-/g, "").toLowerCase();
   if (!/^[0-9a-f]{32}$/.test(hex)) return { status: "not_found" };
-  try {
-    const { status, body } = await httpGetJson(MOJANG_SESSION_URL + hex);
-    if (status === 200 && body && body.name) return { status: "found", name: body.name };
-    if (status === 204 || status === 404) return { status: "not_found" };
-    return { status: "unknown", error: `HTTP ${status}` };
-  } catch (err) {
-    return { status: "unknown", error: err.message };
+  let lastError = "no response";
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const { status, body } = await httpGetJson(MOJANG_SESSION_URL + hex);
+      if (status === 200 && body && body.name) return { status: "found", name: body.name };
+      if (status === 204 || status === 404) return { status: "not_found" };
+      lastError = `HTTP ${status}`;
+      if (status !== 429) break;
+    } catch (err) {
+      lastError = err.message;
+      break;
+    }
+    if (attempt < RETRY_DELAYS_MS.length) await sleep(RETRY_DELAYS_MS[attempt]);
   }
+  return { status: "unknown", error: lastError };
 }
 
 module.exports = { lookupPremiumAccount, lookupNameByUUID, checkCrackedNameAllowed, offlineUUID, dashUUID };
