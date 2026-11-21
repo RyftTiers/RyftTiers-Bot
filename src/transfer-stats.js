@@ -11,6 +11,8 @@
 //   - extra queue slots (max of the two, capped at 2) and VIP purchase
 //   - test history: tests they took (test_log.player_id) and tests they ran
 //     as tester (test_log.tester_id)
+// The handler in index.js also copies the old account's Discord roles over
+// (it keeps them on the old account too).
 // The source keeps its row and Minecraft name, but ends up with no tiers,
 // no cooldowns, 0 coins and 0 bank.
 
