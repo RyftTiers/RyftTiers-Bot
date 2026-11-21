@@ -2989,6 +2989,34 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 
+  // /transferstats — TEMPORARY, see src/transfer-stats.js
+  if (interaction.isChatInputCommand() && interaction.commandName === "transferstats") {
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+      return interaction.reply({ content: "Only admins can do that.", ephemeral: true });
+    }
+    const fromUser = interaction.options.getUser("from", true);
+    const toUser = interaction.options.getUser("to", true);
+    const confirm = interaction.options.getBoolean("confirm") === true;
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const { previewTransfer, runTransfer, describe } = require("./transfer-stats");
+      const preview = await previewTransfer(fromUser, toUser);
+      if (preview.error) return interaction.editReply({ content: preview.error });
+      const summary = describe(preview.source, preview.dest);
+      if (!confirm) {
+        return interaction.editReply({
+          content: `**Preview — nothing has changed yet.**\n${summary}\n\nRun again with \`confirm:True\` to transfer.`,
+        });
+      }
+      await runTransfer(preview.source, preview.dest);
+      await sendBotLog(interaction.guild, `🔁 **Stats transferred** by <@${interaction.user.id}>\n${summary}`);
+      return interaction.editReply({ content: `✅ **Transferred.**\n${summary}` });
+    } catch (err) {
+      console.error("[transferstats]", err);
+      return interaction.editReply({ content: `Transfer failed: ${err.message}` });
+    }
+  }
+
   // /backfilllogs
   if (interaction.isChatInputCommand() && interaction.commandName === "backfilllogs") {
     if (!canManageCooldowns(interaction.member)) {
