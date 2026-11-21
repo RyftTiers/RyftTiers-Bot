@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
-const { GAMEMODES, TIER_OPTIONS } = require("./config");
+const { GAMEMODES, TIER_OPTIONS, gamemodeLabel } = require("./config");
 
 const REGIONS = ["NA", "EU", "AS", "ME", "AU"];
 
@@ -74,7 +74,7 @@ const commands = [
         .setName("gamemode")
         .setDescription("Which gamemode's cooldown to clear")
         .setRequired(true)
-        .addChoices(...GAMEMODES.map((gm) => ({ name: gm, value: gm })))
+        .addChoices(...GAMEMODES.map((gm) => ({ name: gamemodeLabel(gm), value: gm })))
     ),
 
   new SlashCommandBuilder()
@@ -87,7 +87,7 @@ const commands = [
         .setName("gamemode")
         .setDescription("Which gamemode")
         .setRequired(true)
-        .addChoices(...GAMEMODES.map((gm) => ({ name: gm, value: gm })))
+        .addChoices(...GAMEMODES.map((gm) => ({ name: gamemodeLabel(gm), value: gm })))
     )
     .addStringOption((opt) =>
       opt
@@ -208,7 +208,7 @@ const commands = [
         .setName("gamemode")
         .setDescription("Gamemode (only needed for Cooldown Removal)")
         .setRequired(false)
-        .addChoices(...GAMEMODES.map((gm) => ({ name: gm, value: gm })))
+        .addChoices(...GAMEMODES.map((gm) => ({ name: gamemodeLabel(gm), value: gm })))
     ),
 
   new SlashCommandBuilder()
