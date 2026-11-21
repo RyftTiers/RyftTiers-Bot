@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { GAMEMODES, TIER_OPTIONS, gamemodeLabel } = require("./config");
 
 const REGIONS = ["NA", "EU", "AS", "ME", "AU"];
@@ -222,6 +222,17 @@ const commands = [
     )
     .addStringOption((opt) =>
       opt.setName("reason").setDescription("Reason for the restriction").setRequired(true)
+    ),
+
+  // TEMPORARY — remove along with src/transfer-stats.js when done.
+  new SlashCommandBuilder()
+    .setName("transferstats")
+    .setDescription("[TEMP, admin] Move a player's tiers, coins, test history and roles to another account.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addUserOption((opt) => opt.setName("from").setDescription("Old account to take stats from").setRequired(true))
+    .addUserOption((opt) => opt.setName("to").setDescription("New account to give stats to").setRequired(true))
+    .addBooleanOption((opt) =>
+      opt.setName("confirm").setDescription("Leave off to preview; set true to actually transfer").setRequired(false)
     ),
 
   new SlashCommandBuilder()

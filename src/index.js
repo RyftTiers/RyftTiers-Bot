@@ -2990,6 +2990,58 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 
+  // /transferstats — TEMPORARY, see src/transfer-stats.js
+  if (interaction.isChatInputCommand() && interaction.commandName === "transferstats") {
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+      return interaction.reply({ content: "Only admins can do that.", ephemeral: true });
+    }
+    const fromUser = interaction.options.getUser("from", true);
+    const toUser = interaction.options.getUser("to", true);
+    const confirm = interaction.options.getBoolean("confirm") === true;
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const { previewTransfer, runTransfer, describe } = require("./transfer-stats");
+      const preview = await previewTransfer(fromUser, toUser);
+      if (preview.error) return interaction.editReply({ content: preview.error });
+      // Discord roles: copy every role the old account has that the new one
+      // lacks, skipping @everyone, integration-managed roles (booster, bots)
+      // and roles at or above the bot's own top role, which it can't assign.
+      const fromMember = await interaction.guild.members.fetch(fromUser.id).catch(() => null);
+      const toMember = await interaction.guild.members.fetch(toUser.id).catch(() => null);
+      const botTop = interaction.guild.members.me.roles.highest.position;
+      const roleCandidates = fromMember && toMember
+        ? [...fromMember.roles.cache.values()].filter(
+            (r) => r.id !== interaction.guild.id && !toMember.roles.cache.has(r.id)
+          )
+        : [];
+      const rolesToAdd = roleCandidates.filter((r) => !r.managed && r.position < botTop);
+      const rolesSkipped = roleCandidates.filter((r) => r.managed || r.position >= botTop);
+      let roleLine;
+      if (!fromMember || !toMember) {
+        roleLine = `**Discord roles:** skipped (${!fromMember ? "old" : "new"} account isn't in this server)`;
+      } else {
+        roleLine = `**Discord roles to add:** ${rolesToAdd.length ? rolesToAdd.map((r) => r.name).join(", ") : "none"}`;
+        if (rolesSkipped.length) roleLine += `\n**Roles the bot can't give (add by hand):** ${rolesSkipped.map((r) => r.name).join(", ")}`;
+      }
+
+      const summary = `${describe(preview.source, preview.dest)}\n${roleLine}`;
+      if (!confirm) {
+        return interaction.editReply({
+          content: `**Preview — nothing has changed yet.**\n${summary}\n\nRun again with \`confirm:True\` to transfer.`,
+        });
+      }
+      await runTransfer(preview.source, preview.dest);
+      if (toMember && rolesToAdd.length) {
+        await toMember.roles.add(rolesToAdd, `/transferstats by ${interaction.user.tag}`);
+      }
+      await sendBotLog(interaction.guild, `🔁 **Stats transferred** by <@${interaction.user.id}>\n${summary}`);
+      return interaction.editReply({ content: `✅ **Transferred.**\n${summary}` });
+    } catch (err) {
+      console.error("[transferstats]", err);
+      return interaction.editReply({ content: `Transfer failed: ${err.message}` });
+    }
+  }
+
   // /backfilllogs
   if (interaction.isChatInputCommand() && interaction.commandName === "backfilllogs") {
     if (!canManageCooldowns(interaction.member)) {
