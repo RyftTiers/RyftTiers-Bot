@@ -227,7 +227,7 @@ const commands = [
   // TEMPORARY — remove along with src/transfer-stats.js when done.
   new SlashCommandBuilder()
     .setName("transferstats")
-    .setDescription("[TEMP, admin] Move a player's tiers, coins and test history to another Discord account.")
+    .setDescription("[TEMP, admin] Move a player's tiers, coins, test history and roles to another account.")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addUserOption((opt) => opt.setName("from").setDescription("Old account to take stats from").setRequired(true))
     .addUserOption((opt) => opt.setName("to").setDescription("New account to give stats to").setRequired(true))
