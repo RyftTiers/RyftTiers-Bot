@@ -1477,6 +1477,16 @@ async function postFreshQueueMessage(channel, queueKey, gamemode, { isHigh = fal
           console.error("[postFreshQueueMessage] edit failed, reposting:", err.message);
           return null;
         });
+      // The card must carry exactly one picture. If Discord kept the old
+      // queue.png next to the new one (seen after a pull: two cards side by
+      // side in one message), throw this message away and post a clean one.
+      if (cardMessage && cardMessage.attachments?.size !== 1) {
+        console.warn(
+          `[postFreshQueueMessage] card ${cardMessage.id} has ${cardMessage.attachments?.size} attachments after edit, reposting`
+        );
+        oldMessage = cardMessage;
+        cardMessage = null;
+      }
     }
     if (!cardMessage) {
       if (oldMessage) await oldMessage.delete().catch(() => {});
