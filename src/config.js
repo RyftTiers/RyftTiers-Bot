@@ -165,6 +165,25 @@ const GAMEMODE_PING_ROLE_NAMES = {
   spearmace: "Spear Mace",
 };
 
+// Human-readable gamemode names for bot messages. Internal ids (e.g.
+// "vanilla") are kept for keys/DB; players should see "Crystal".
+const GAMEMODE_DISPLAY_NAMES = {
+  vanilla: "Crystal",
+  axe: "Axe",
+  sword: "Sword",
+  mace: "Mace",
+  nethop: "NethPot",
+  pot: "Pot",
+  smp: "SMP",
+  uhc: "UHC",
+  cart: "Cart",
+  spearmace: "Mace and Spear",
+};
+
+function gamemodeLabel(gamemode) {
+  return GAMEMODE_DISPLAY_NAMES[gamemode] || gamemode;
+}
+
 // Discord role names for each region — assigned automatically when a player
 // verifies on the website. Matched by name so they can be renamed in Discord
 // without touching the bot (just update these strings to match).
@@ -343,6 +362,8 @@ module.exports = {
   regionForForumName,
   gamemodeForThreadName,
   parseQueueChannel,
+  GAMEMODE_DISPLAY_NAMES,
+  gamemodeLabel,
   COIN_REWARDS,
   MILESTONE_TIERS,
   SHOP_ITEMS,

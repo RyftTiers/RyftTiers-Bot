@@ -70,6 +70,7 @@ const {
   regionForForumName,
   gamemodeForThreadName,
   parseQueueChannel,
+  gamemodeLabel,
   RESTRICTED_ROLE_ID,
   GAMEMODE_EMOJIS,
   COIN_REWARDS,
@@ -2250,12 +2251,12 @@ client.on("interactionCreate", async (interaction) => {
         suppressRealtimeFor(queueKey);
         const pingContent = `${getRolePing(interaction.guild, gamemode)}Queue is open! (${region})`;
         await postFreshQueueMessage(interaction.channel, queueKey, gamemode, { content: pingContent });
-        return interaction.editReply({ content: `Queue opened for **${gamemode}** (${region}). You've been added as a tester.` });
+        return interaction.editReply({ content: `Queue opened for **${gamemodeLabel(gamemode)}** (${region}). You've been added as a tester.` });
       } else {
         // Queue already open — join as an additional tester.
         const added = await addQueueTester(queueKey, interaction.user.id);
         if (!added) {
-          return interaction.editReply({ content: `You're already listed as a tester for **${gamemode}** (${region}).` });
+          return interaction.editReply({ content: `You're already listed as a tester for **${gamemodeLabel(gamemode)}** (${region}).` });
         }
 
         // If a test is in progress, grant access to that ticket immediately.
@@ -2277,7 +2278,7 @@ client.on("interactionCreate", async (interaction) => {
 
         suppressRealtimeFor(queueKey);
         await postFreshQueueMessage(interaction.channel, queueKey, gamemode);
-        return interaction.editReply({ content: `You're now testing **${gamemode}** (${region}) alongside the other tester(s).` });
+        return interaction.editReply({ content: `You're now testing **${gamemodeLabel(gamemode)}** (${region}) alongside the other tester(s).` });
       }
     }
 
@@ -2289,7 +2290,7 @@ client.on("interactionCreate", async (interaction) => {
       await setQueueClosed(queueKey, true);
       suppressRealtimeFor(queueKey);
       await postFreshQueueMessage(interaction.channel, queueKey, gamemode);
-      return interaction.editReply({ content: `Queue closed for **${gamemode}** (${region}). All testers and queue entries cleared.` });
+      return interaction.editReply({ content: `Queue closed for **${gamemodeLabel(gamemode)}** (${region}). All testers and queue entries cleared.` });
     }
 
     // --- /tester pull ---
@@ -2328,7 +2329,7 @@ client.on("interactionCreate", async (interaction) => {
         console.error("[tester pull] setLiveTest failed:", err.message);
       }
 
-      dmUser(testeeId, `You've been pulled from the **${gamemode}** queue (${region}) — check ${ticketChannel} for your test ticket!`);
+      dmUser(testeeId, `You've been pulled from the **${gamemodeLabel(gamemode)}** queue (${region}) — check ${ticketChannel} for your test ticket!`);
 
       suppressRealtimeFor(queueKey);
       await postFreshQueueMessage(interaction.channel, queueKey, gamemode);
@@ -2342,7 +2343,7 @@ client.on("interactionCreate", async (interaction) => {
       await setQueueLocked(queueKey, !locked);
       suppressRealtimeFor(queueKey);
       await postFreshQueueMessage(interaction.channel, queueKey, gamemode);
-      return interaction.editReply({ content: locked ? `Queue unlocked for **${gamemode}** (${region}).` : `Queue locked for **${gamemode}** (${region}) — nobody new can join.` });
+      return interaction.editReply({ content: locked ? `Queue unlocked for **${gamemodeLabel(gamemode)}** (${region}).` : `Queue locked for **${gamemodeLabel(gamemode)}** (${region}) — nobody new can join.` });
     }
 
     // --- /tester leave ---
@@ -2351,7 +2352,7 @@ client.on("interactionCreate", async (interaction) => {
 
       const removed = await removeQueueTester(queueKey, interaction.user.id);
       if (!removed) {
-        return interaction.editReply({ content: `You're not currently listed as a tester for **${gamemode}** (${region}).` });
+        return interaction.editReply({ content: `You're not currently listed as a tester for **${gamemodeLabel(gamemode)}** (${region}).` });
       }
 
       // If a test is in progress, revoke this tester's access to that ticket.
@@ -2377,12 +2378,12 @@ client.on("interactionCreate", async (interaction) => {
         await setQueueClosed(queueKey, true);
         suppressRealtimeFor(queueKey);
         await postFreshQueueMessage(interaction.channel, queueKey, gamemode);
-        return interaction.editReply({ content: `You left. No testers remaining — **${gamemode}** (${region}) queue has been closed.` });
+        return interaction.editReply({ content: `You left. No testers remaining — **${gamemodeLabel(gamemode)}** (${region}) queue has been closed.` });
       }
 
       suppressRealtimeFor(queueKey);
       await postFreshQueueMessage(interaction.channel, queueKey, gamemode);
-      return interaction.editReply({ content: `You've left the active testers for **${gamemode}** (${region}).` });
+      return interaction.editReply({ content: `You've left the active testers for **${gamemodeLabel(gamemode)}** (${region}).` });
     }
 
     return interaction.reply({ content: "Unknown action.", ephemeral: true });
@@ -2405,7 +2406,7 @@ client.on("interactionCreate", async (interaction) => {
     const removed = await removeQueueTester(queueKey, target.id);
     if (!removed) {
       return interaction.reply({
-        content: `${target.username} isn't in the active testers list for **${gamemode}** (${region}).`,
+        content: `${target.username} isn't in the active testers list for **${gamemodeLabel(gamemode)}** (${region}).`,
         ephemeral: true,
       });
     }
@@ -2430,7 +2431,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     return interaction.reply({
-      content: `Removed **${target.username}** from the active testers list for **${gamemode}** (${region}).`,
+      content: `Removed **${target.username}** from the active testers list for **${gamemodeLabel(gamemode)}** (${region}).`,
       ephemeral: true,
     });
   }
@@ -2760,7 +2761,7 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.editReply({ content: `Not enough coins. You have **${bal}**, need **${item.price}**.`, components: [] });
     }
     await clearCooldown(gamemode, interaction.user.id);
-    return interaction.editReply({ content: `✅ Cooldown removed for **${gamemode}**! (-${item.price} coins)`, components: [] });
+    return interaction.editReply({ content: `✅ Cooldown removed for **${gamemodeLabel(gamemode)}**! (-${item.price} coins)`, components: [] });
   }
 
   // /coinflip
@@ -2882,7 +2883,7 @@ client.on("interactionCreate", async (interaction) => {
     if (itemKey === "cooldown_remove") {
       await clearCooldown(gamemode, targetUser.id);
       return interaction.editReply({
-        content: `🎁 Gifted **Cooldown Removal** (${gamemode}) to ${targetUser}!${giftPrice > 0 ? ` (-${giftPrice} coins)` : " (free)"}`,
+        content: `🎁 Gifted **Cooldown Removal** (${gamemodeLabel(gamemode)}) to ${targetUser}!${giftPrice > 0 ? ` (-${giftPrice} coins)` : " (free)"}`,
       });
     }
 
@@ -3094,7 +3095,7 @@ client.on("interactionCreate", async (interaction) => {
     const gamemode = interaction.options.getString("gamemode", true);
     await clearCooldown(gamemode, targetUser.id);
     return interaction.reply({
-      content: `Cleared <@${targetUser.id}>'s **${gamemode}** cooldown. They can queue again now.`,
+      content: `Cleared <@${targetUser.id}>'s **${gamemodeLabel(gamemode)}** cooldown. They can queue again now.`,
     });
   }
 
@@ -3153,17 +3154,17 @@ client.on("interactionCreate", async (interaction) => {
       if (tier === "Unranked") {
         await removePlayerTier(username, gamemode);
         await interaction.reply({
-          content: `Removed **${username}**'s tier for **${gamemode}** — they are now unranked. The website will update automatically.`,
+          content: `Removed **${username}**'s tier for **${gamemodeLabel(gamemode)}** — they are now unranked. The website will update automatically.`,
         });
         const changeText = previousTier ? `${previousTier} → Unranked` : `Untested → Unranked`;
-        await sendBotLog(interaction.guild, `🎯 **Tier set** — **${username}** | ${gamemode} | ${changeText} | by <@${interaction.user.id}>`);
+        await sendBotLog(interaction.guild, `🎯 **Tier set** — **${username}** | ${gamemodeLabel(gamemode)} | ${changeText} | by <@${interaction.user.id}>`);
       } else {
       await setPlayerTier(username, region, gamemode, tier);
       await interaction.reply({
-        content: `Set **${username}** to **${tier}** in **${gamemode}**. The website will update automatically.`,
+        content: `Set **${username}** to **${tier}** in **${gamemodeLabel(gamemode)}**. The website will update automatically.`,
       });
       const changeText = existing?.tiers?.[gamemode] ? `${existing.tiers[gamemode]} → ${tier}` : `Untested → ${tier}`;
-      await sendBotLog(interaction.guild, `🎯 **Tier set** — **${username}** | ${gamemode} | ${changeText} | by <@${interaction.user.id}>`);
+      await sendBotLog(interaction.guild, `🎯 **Tier set** — **${username}** | ${gamemodeLabel(gamemode)} | ${changeText} | by <@${interaction.user.id}>`);
 
       if (process.env.RESULTS_CHANNEL_ID) {
         const resultsChannel = await interaction.guild.channels
@@ -3678,7 +3679,7 @@ client.on("interactionCreate", async (interaction) => {
       const cooldownUntil = await getCooldownUntil(gamemode, interaction.user.id);
       if (cooldownUntil && cooldownUntil > Date.now()) {
         return interaction.editReply({
-          content: `You were tested in **${gamemode}** recently. You can queue again in ${formatRemaining(cooldownUntil - Date.now())}.`,
+          content: `You were tested in **${gamemodeLabel(gamemode)}** recently. You can queue again in ${formatRemaining(cooldownUntil - Date.now())}.`,
         });
       }
       const joined = await joinQueue(queueKey, interaction.user.id, region);
@@ -3686,7 +3687,7 @@ client.on("interactionCreate", async (interaction) => {
       if (joined) {
         const pos = await getQueuePosition(queueKey, interaction.user.id);
         if (pos === 1) {
-          dmUser(interaction.user.id, `🟡 You're **#1 in the ${gamemode} queue** — get ready! A tester will pull you shortly.`);
+          dmUser(interaction.user.id, `🟡 You're **#1 in the ${gamemodeLabel(gamemode)} queue** — get ready! A tester will pull you shortly.`);
         }
       }
       return interaction.editReply({
@@ -3746,7 +3747,7 @@ client.on("interactionCreate", async (interaction) => {
 
       if (tierIndex === -1 || tierIndex > HIGH_QUEUE_MAX_INDEX) {
         return interaction.editReply({
-          content: `The high queue for **${gamemode}** is only open to players already tiered **LT3 or better**. Your current tier: **${currentTier || "Untested"}**.`,
+          content: `The high queue for **${gamemodeLabel(gamemode)}** is only open to players already tiered **LT3 or better**. Your current tier: **${currentTier || "Untested"}**.`,
         });
       }
 
@@ -3755,7 +3756,7 @@ client.on("interactionCreate", async (interaction) => {
       if (joined) {
         const pos = await getQueuePosition(highKey, interaction.user.id);
         if (pos === 1) {
-          dmUser(interaction.user.id, `🟡 You're **#1 in the ${gamemode} high queue** — get ready! A tester will pull you shortly.`);
+          dmUser(interaction.user.id, `🟡 You're **#1 in the ${gamemodeLabel(gamemode)} high queue** — get ready! A tester will pull you shortly.`);
         }
       }
       return interaction.editReply({
@@ -4109,7 +4110,7 @@ client.on("interactionCreate", async (interaction) => {
         await setCooldown(gamemode, testeeId, Date.now() + COOLDOWN_MS);
       }
       await interaction.editReply({
-        content: `Saved: **${name}** is now **${tier}** in **${gamemode}**. The website will update automatically. They're on a ${COOLDOWN_DAYS}-day cooldown for this gamemode. Closing this ticket in 5 seconds...`,
+        content: `Saved: **${name}** is now **${tier}** in **${gamemodeLabel(gamemode)}**. The website will update automatically. They're on a ${COOLDOWN_DAYS}-day cooldown for this gamemode. Closing this ticket in 5 seconds...`,
       });
       const changeText = previousTier ? `${previousTier} → ${tier}` : `Untested → ${tier}`;
       await sendBotLog(interaction.guild, `🎯 **Test result submitted** — **${name}**${testeeId ? ` (<@${testeeId}>)` : ""} | ${gamemode.toUpperCase()} | ${changeText} | Region: ${region} | Tester: <@${interaction.user.id}>`);
