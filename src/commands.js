@@ -240,6 +240,20 @@ const commands = [
     .setDescription("Create a private voice channel for screensharing in this test ticket. Run inside a ticket channel."),
 
   new SlashCommandBuilder()
+    .setName("ssresult")
+    .setDescription("Look up a ModAnzer screenshare result by the code the player got. (Testers/staff)")
+    .addStringOption((opt) =>
+      opt.setName("refcode").setDescription("The 6-character code ModAnzer showed the player, e.g. 7k3qxf").setRequired(true)
+        .setMinLength(6).setMaxLength(12)
+    )
+    .addUserOption((opt) =>
+      opt.setName("user").setDescription("The player who was screenshared").setRequired(false)
+    )
+    .addBooleanOption((opt) =>
+      opt.setName("show").setDescription("Post the result in this channel instead of only to you").setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
     .setName("announce")
     .setDescription("Post an announcement to #announcements and the website. (Managers/owners only)")
     .addStringOption((opt) =>

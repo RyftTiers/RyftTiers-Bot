@@ -820,3 +820,27 @@ begin
     end if;
   end loop;
 end $$;
+
+-- ---------- ModAnzer screenshare reports ----------
+-- Saved by ModAnzer's report function (github.com/RyftTiers/ModAnzer,
+-- supabase/functions/modanzer-report) and read by the bot's /ssresult command.
+create table if not exists public.modanzer_reports (
+  id           bigint generated always as identity primary key,
+  ref_code     text not null unique,
+  tool         text not null default 'ModAnzer',
+  mode         text,
+  finished     text,
+  discord_id   text,
+  accounts     jsonb not null default '[]'::jsonb,
+  mods         jsonb,
+  system       jsonb,
+  injection    jsonb,
+  status       text not null default 'new',   -- new -> checked
+  sender_hash  text,
+  received_at  timestamptz not null default now(),
+  checked_by   text,                           -- Discord id of the first staff member to run /ssresult
+  checked_at   timestamptz,
+  player_id    text                            -- Discord id given in /ssresult user:
+);
+-- Service role only (the report function and the bot).
+alter table public.modanzer_reports enable row level security;
