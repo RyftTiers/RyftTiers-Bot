@@ -3001,6 +3001,12 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 
+  // /ssresult — look up a ModAnzer screenshare report, see src/ssresult.js
+  if (interaction.isChatInputCommand() && interaction.commandName === "ssresult") {
+    const { handleSsResult } = require("./ssresult");
+    return handleSsResult(interaction, { isStaff: canManageCooldowns });
+  }
+
   // /transferstats — TEMPORARY, see src/transfer-stats.js
   if (interaction.isChatInputCommand() && interaction.commandName === "transferstats") {
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
