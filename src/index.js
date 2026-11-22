@@ -1,4 +1,5 @@
 console.log("[startup] index.js starting...");
+const { isApiRequest, handleApiRequest } = require("./public-api-server");
 require("dotenv").config();
 
 const {
@@ -4901,6 +4902,8 @@ setInterval(() => {
 const http = require("http");
 http
   .createServer((req, res) => {
+    // Public tier API (see src/public-api-server.js).
+    if (isApiRequest(req)) return handleApiRequest(req, res);
     // 503 when the Discord gateway is down, so an uptime pinger notices.
     const ready = client.ws.status === Status.Ready;
     res.statusCode = ready ? 200 : 503;
